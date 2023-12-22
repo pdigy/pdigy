@@ -1,3 +1,6 @@
+![Alt text](docs/pdigy_logo.jpg?raw=true "Title")
+
+
 # Prerequisites for pdigy
 
 1. PIL (Pillow)
