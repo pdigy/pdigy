@@ -5,6 +5,6 @@
 
 1. PIL (Pillow)
 2. numpy
-3. constants (Custom Module)
-4. pandas
-5. openslide (SVS)
+3. pandas
+4. openslide (SVS)
+5. jupyter-notebook (for the example)

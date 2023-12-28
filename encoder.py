@@ -12,21 +12,28 @@ class pdigy:
     def get_word_map(self):
         return self.map_word
 
-    def __init__(self, image_path):
+    def __init__(self, image_path=None, meta_path=None):
         self.map_word = header()
         self.image_path = image_path
-        self.full_image_data = self._load_image_data()
-        self.thumbnail_data = self._create_thumbnail()
-        self.full_image_size_hex = self._size_to_hex(
-            len(self.full_image_data), 10)
-        self.thumbnail_size_hex = self._size_to_hex(
-            len(self.thumbnail_data), 6)
-        self.n_patches = 0
-        self.patches = None
-        self.filter_map = None
-        self._extract_patches()
+        if self.image_path:
+            self.full_image_data = self._load_image_data()
+            self.thumbnail_data = self._create_thumbnail()
+            self.full_image_size_hex = self._size_to_hex(
+                len(self.full_image_data), 10)
+            self.thumbnail_size_hex = self._size_to_hex(
+                len(self.thumbnail_data), 6)
+            self.n_patches = 0
+            self.patches = None
+            self.filter_map = None
+            self._extract_patches()
         self.compression = True
-
+        map_path = "PDigyMap.xlsx"
+        map_df = pd.read_excel(map_path)
+        self.map_info = self.parse_map_dataframe(map_df)
+        if meta_path:
+            # Read the new Excel sheets again after the reset
+            self.meta_df = pd.read_excel(meta_path)
+        
     def _load_image_data(self):
         with open(self.image_path, "rb") as image_file:
             return image_file.read()
@@ -114,9 +121,12 @@ class pdigy:
             len(compressed_patches), 8
         )  # 8 hex digits for 32 bits
         file_content += bytearray.fromhex(compressed_patches_size_hex)
-
+        encoded_metadata = self.encode_meta(self.meta_df)
         # Append compressed patch data
         file_content += compressed_patches
+        file_content += encoded_metadata
+        print(self.map_info)
+
         return file_content
 
     def _extract_patches(self, patch_size=1024, threshold=0.0, maximum_size=1000000):
@@ -171,8 +181,6 @@ class pdigy:
         with open(file_path + ".pdigy", "wb") as file:
             file.write(file_content)
 
-    """ EXPERIMENTAL FEATURES BELOW - WILL BE INTEGRATED IN v0.6 """
-
     def encode_value(self, value, size):
         if len(value) > size:
             raise ValueError(
@@ -219,79 +227,63 @@ class pdigy:
                 }
         return mapping
 
-    def encode_meta(self, example_df, map_info):
+    def encode_meta(self, input_df):
         # Initialize a binary map of 4096 bits with all zeros
         binary_map = bytearray(512)
         encoded_data_temp = {}  # Dictionary to hold encoded data temporarily
         # Temporary dictionary to store values of codes which determine sizes of other codes
         size_values = {}
 
-        for _, row in example_df.iterrows():
+        for _, row in input_df.iterrows():
             code = row["Code"].strip('"')
             value = row["Value"].strip('"')
-            print("values", code, value)
+            #print("values", code, value)
 
-            if code in map_info:
-                map_entry = map_info[code]
+            if code in self.map_info:
+                map_entry = self.map_info[code]
+                #print("Map entry: ", map_entry, " Code: ", code)
                 length_info = map_entry["length"]
 
                 # Special handling for 'Calibration' data
-                if code == "010":
-                    # Remove curly braces and split the value into individual words - these may look like json but they are just tuples
-                    words = value.split(",")
-                    print(words)
-                    encoded_words = []
-                    for word in words:
-                        word = (
-                            word.strip().strip("{").strip("}").strip('"')
-                        )  # Removing extra spaces and quotes
-                        # Assuming each word should be padded to 32 bytes
-                        padded_word = self.encode_value(word, 32)
-                        encoded_words.append(padded_word)
-                    encoded_value = b"".join(encoded_words)
-                    print(encoded_value)
+                # Handle numerical values correctly for size determining codes
+                if "len" in map_entry["name"]:
+                    try:
+                        # Convert value to int and then to a binary string, padded to the correct length
+                        numeric_value = int(value)
+                        encoded_value = numeric_value.to_bytes(
+                            length_info, byteorder="big"
+                        )
+                        #print("encoded val", encoded_value)
+                    except ValueError:
+                        raise ValueError(
+                            f"Code '{code}' requires a numerical value.")
+                    size_values[code] = numeric_value
                 else:
-                    # Handle numerical values correctly for size determining codes
-                    if "len" in map_entry["name"]:
-                        try:
-                            # Convert value to int and then to a binary string, padded to the correct length
-                            numeric_value = int(value)
-                            encoded_value = numeric_value.to_bytes(
-                                length_info, byteorder="big"
-                            )
-                            print("encoded val", encoded_value)
-                        except ValueError:
-                            raise ValueError(
-                                f"Code '{code}' requires a numerical value."
-                            )
-                        size_values[code] = numeric_value
-                    else:
-                        # Check if length is a variable size
-                        if isinstance(length_info, tuple):
-                            variable_code, fixed_length = length_info
-                            if variable_code in size_values:
-                                size = size_values[variable_code] * \
-                                    fixed_length
-                            else:
-                                continue  # Skip processing this code until the variable code is processed
+                    # Check if length is a variable size
+                    if isinstance(length_info, tuple):
+                        variable_code, fixed_length = length_info
+                        if variable_code in size_values:
+                            size = size_values[variable_code] * fixed_length
                         else:
-                            size = length_info
-                        encoded_value = self.encode_value(value, size)
+                            continue  # Skip processing this code until the variable code is processed
+                    else:
+                        size = length_info
+                    encoded_value = self.encode_value(value, size)
                 encoded_data_temp[code] = encoded_value
                 # Update the binary map: setting the bit corresponding to the code to 1
                 bit_position = int(code, 16)
                 byte_index = bit_position // 8
                 bit_index = bit_position % 8
                 binary_map[byte_index] |= 1 << bit_index
-                print(binary_map)
-                print(np.shape(binary_map))
+                #print(binary_map)
+                #print(np.shape(binary_map))
             else:
                 raise ValueError(f"Code '{code}' not found in the map.")
         # Concatenate the binary map and the encoded data
         encoded_full_data = binary_map
         for code in encoded_data_temp:
-            print("samples: ", encoded_data_temp)
-            print(np.shape(encoded_data_temp))
+            #print("samples: ", encoded_data_temp)
+            #print(np.shape(encoded_data_temp))
             encoded_full_data.extend(encoded_data_temp[code])
-            print(encoded_full_data)
+            #print(encoded_full_data)
         return encoded_full_data
