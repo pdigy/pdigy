@@ -1,4 +1,4 @@
-![Alt text](docs/pdigy_logo.jpg?raw=true "Title")
+![Alt text](docs/pdigy_animated.gif?raw=true "Title")
 
 
 # Prerequisites for pdigy
