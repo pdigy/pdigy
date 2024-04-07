@@ -17,6 +17,8 @@ class pdigyDecoder:
         self.pdigy = pdigy()
         self.map_info = self.pdigy.parse_map_dataframe(map_df)
         self.file_path = file_path
+        self.output_folder = "output_pdigy"
+        self.thumbnail_image, self.patches, (self.dimx, self.dimy), self.full_image = self.decode_file()
 
     def _hex_to_size(self, hex_bytes):
         return int.from_bytes(hex_bytes, byteorder="big")
@@ -67,10 +69,11 @@ class pdigyDecoder:
             compressed_patches_data = file.read(serialized_patches_size)
             serialized_patches_data = zipper.decompress(
                 compressed_patches_data)
-            patches = pickle.loads(serialized_patches_data)
+            self.patches = pickle.loads(serialized_patches_data)
+            self.dimx = n_patches_x
+            self.dimy = n_patches_x
             thumbnail_image = Image.open(io.BytesIO(thumbnail_data))
-            full_image = self.reconstruct_image(
-                patches, n_patches_x, n_patches_y)
+            self.full_image = self.reconstruct_image()
             # Read the binary map of 4096 bits (512 bytes)
             binary_map = file.read(512)
             # Read the rest of the file
@@ -78,41 +81,39 @@ class pdigyDecoder:
             decoded_data = self.decode_binary_data(binary_map, encoded_data)
             decoded_data = {key: value.replace('\x00', '') for key, value in decoded_data.items()}
             print(decoded_data)
-            return thumbnail_image, patches, (n_patches_x, n_patches_y), full_image
+            return thumbnail_image, self.patches, (n_patches_x, n_patches_y), self.full_image
 
     # Reconstructs the image from patches.
-    def reconstruct_image(self, patches, dimx, dimy):
+    def reconstruct_image(self):
         # Assuming all patches are of the same size
-        patch_width, patch_height = Image.open(io.BytesIO(patches[0])).size
+        patch_width, patch_height = Image.open(io.BytesIO(self.patches[0])).size
         # Create a blank image with the correct total size
         full_image = Image.new(
-            "RGB", (patch_width * dimx, patch_height * dimy))
+            "RGB", (patch_width * self.dimx, patch_height * self.dimy))
         # Stitch the patches
-        for i in range(dimy):
-            for j in range(dimx):
-                patch_image = Image.open(io.BytesIO(patches[i * dimx + j]))
+        for i in range(self.dimy):
+            for j in range(self.dimx):
+                patch_image = Image.open(io.BytesIO(self.patches[i * self.dimx + j]))
                 full_image.paste(
                     patch_image, (j * patch_width, i * patch_height))
         return full_image
 
     def save_images(self, thumbnail_image_path):
-        thumbnail_image, patches, _, full_image = self.decode_file()
-        thumbnail_image.save(thumbnail_image_path)
-        output_folder = "output_pdigy"
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
-        for i, patch_data in enumerate(patches):
+        self.thumbnail_image.save(thumbnail_image_path)
+        
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+        for i, patch_data in enumerate(self.patches):
             patch_image = Image.open(io.BytesIO(patch_data))
-            patch_path = os.path.join(output_folder, f"patch_{i}.JPEG")
+            patch_path = os.path.join(self.output_folder, f"patch_{i}.JPEG")
             patch_image.save(patch_path)
-        output_path = os.path.join(output_folder, f"full_image.JPEG")
-        full_image.save(output_path)
+        output_path = os.path.join(self.output_folder, f"full_image.JPEG")
+        self.full_image.save(output_path)
         print(f"Thumbnail image saved to {thumbnail_image_path}")
-        print(f"Decoded and saved {len(patches)} patches to {output_folder}")
+        print(f"Decoded and saved {len(self.patches)} patches to {self.output_folder}")
 
     def decode_binary_data(self, binary_map, encoded_data):
         decoded_data = {}
-
         # Decode each code based on the binary map and map_info
         current_position = 0
         for code in self.map_info:
@@ -120,7 +121,6 @@ class pdigyDecoder:
             if code == 'nan':
                 print("nan")
                 continue
-            #print("code", code)
             bit_position = int(code, 16)
             byte_index = bit_position // 8
             bit_index = bit_position % 8
@@ -133,8 +133,6 @@ class pdigyDecoder:
                 if isinstance(length_info, tuple):
                     variable_code, fixed_length = length_info
                     # Ensure that the variable code has been processed before
-                    #print("decoded_data",decoded_data)
-                    #print("variable_code",variable_code)
                     if variable_code not in decoded_data:
                         print("ERROR ERROR")
                         continue  # Skip processing this code until the variable code is processed
@@ -151,7 +149,6 @@ class pdigyDecoder:
                     size = value * fixed_length
                 else:
                     size = length_info
-
                 # Extract and decode the value
                 value = encoded_data[current_position:current_position + size].decode('utf-8').rstrip('\0')
                 decoded_data[code] = value

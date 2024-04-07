@@ -46,10 +46,10 @@ class pdigy:
         dpi_x = metadata.get(openslide.PROPERTY_NAME_MPP_X)
         # micrometres per pixel in Y
         dpi_y = metadata.get(openslide.PROPERTY_NAME_MPP_Y)
-        # Convert micrometres per pixel to DPI (if possible)
+        # Convert micrometres per pixel to DPI 
         if dpi_x and dpi_y:
-            dpi_x = 25400 / float(dpi_x)  # 25400 micrometres per inch
-            dpi_y = 25400 / float(dpi_y)
+            dpi_x = mum_to_inch() / float(dpi_x) 
+            dpi_y = mum_to_inch() / float(dpi_y)
         else:
             dpi_x, dpi_y = None, None
         return dpi_x, dpi_y, metadata
@@ -271,9 +271,9 @@ class pdigy:
                     encoded_value = self.encode_value(value, size)
                 encoded_data_temp[code] = encoded_value
                 # Update the binary map: setting the bit corresponding to the code to 1
-                bit_position = int(code, 16)
-                byte_index = bit_position // 8
-                bit_index = bit_position % 8
+                bit_position = int(code, hex_to_dec())
+                byte_index = bit_position // byte_to_bit()
+                bit_index = bit_position % byte_to_bit()
                 binary_map[byte_index] |= 1 << bit_index
                 #print(binary_map)
                 #print(np.shape(binary_map))
