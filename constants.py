@@ -16,3 +16,5 @@ def header():
     return {0:[ header_lead(),1], 1:[ version(),1], 2:[ header_name(),5]}
 def mum_to_inch():
     return 25400
+def map_path():
+    return "PDigyMap.xlsx"

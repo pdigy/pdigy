@@ -1,42 +1,111 @@
-from PIL import Image
 import io
 import numpy as np
-import pickle
-from constants import *
-import lzma as zipper
 import pandas as pd
+import pickle
+from PIL import Image
+import logging
 import openslide
+import lzma as zipper
+from constants import *
 
 
 class pdigy:
-    def get_word_map(self):
-        return self.map_word
+    """
+    Pdigy encoder class for processing and encoding medical image data with
+    metadata handling.
 
+    Attributes:
+        image_path (str): Path to the image file.
+        meta_path (str): Path to the metadata file.
+        map_word (dict): Mapping of word headers.
+        full_image_data (bytes): Raw image data.
+        thumbnail_data (bytes): Compressed thumbnail data.
+        full_image_size_hex (str): Hexadecimal string representing the size of
+    the full image data.
+        thumbnail_size_hex (str): Hexadecimal string representing the size of
+    the thumbnail data.
+        n_patches (int): Number of image patches.
+        patches (list): List of image patches.
+        filter_map (numpy.ndarray): Filter map for patch extraction.
+        compression (bool): Flag indicating if compression is applied.
+        map_info (dict): Information mapping from a dataframe.
+        meta_df (pandas.DataFrame): DataFrame containing metadata.
+    """
     def __init__(self, image_path=None, meta_path=None):
+        """
+        Initializes the Pdigy object with image and meta data paths.
+
+        Parameters:
+            image_path (str, optional): Path to the image file. Defaults to None.
+            meta_path (str, optional): Path to the metadata Excel file. Defaults to None.
+        """
         self.map_word = header()
         self.image_path = image_path
-        if self.image_path:
-            self.full_image_data = self._load_image_data()
-            self.thumbnail_data = self._create_thumbnail()
-            self.full_image_size_hex = self._size_to_hex(
-                len(self.full_image_data), 10)
-            self.thumbnail_size_hex = self._size_to_hex(
-                len(self.thumbnail_data), 6)
-            self.n_patches = 0
-            self.patches = None
-            self.filter_map = None
-            self._extract_patches()
+        self.full_image_data = self._load_image_data() if image_path else None
+        self.thumbnail_data = self._create_thumbnail() if image_path else None
+        self.full_image_size_hex = self._size_to_hex(len(self.full_image_data), 10) if image_path else None
+        print(self.full_image_size_hex)
+        self.thumbnail_size_hex = self._size_to_hex(len(self.thumbnail_data), 6) if image_path else None
+        self.n_patches = 0
+        self.patches = []
+        self.filter_map = None
         self.compression = True
-        map_path = "PDigyMap.xlsx"
-        map_df = pd.read_excel(map_path)
-        self.map_info = self.parse_map_dataframe(map_df)
+        self.map_info = self.parse_map_dataframe(pd.read_excel(map_path()))
         if meta_path:
-            # Read the new Excel sheets again after the reset
             self.meta_df = pd.read_excel(meta_path)
-        
+            self._extract_patches()  # Extract patches if image path is provided and valid.
+
     def _load_image_data(self):
-        with open(self.image_path, "rb") as image_file:
-            return image_file.read()
+        """
+        Loads image data from the file specified by the image path.
+
+        Returns:
+            bytes: The raw image data.
+        """
+        try:
+            with open(self.image_path, "rb") as image_file:
+                return image_file.read()
+        except IOError as e:
+            logging.error(f"Failed to load image data: {e}")
+            return None
+
+    def _create_thumbnail(self):
+        """
+        Creates a thumbnail of the loaded image.
+
+        Returns:
+            bytes: The compressed thumbnail data.
+        """
+        try:
+            if "svs" in self.image_path:
+                img = self._load_svs_image_data()
+                dpi = img.info.get("dpi", (72, 72))
+                if img.mode == "RGBA":
+                    img = img.convert("RGB")
+                img.thumbnail((img.size[0] // 10, img.size[1] // 10), Image.LANCZOS)
+            else:
+                with Image.open(self.image_path) as img:
+                    img.thumbnail((img.size[0] // 10, img.size[1] // 10), Image.LANCZOS)
+
+            with io.BytesIO() as thumb_io:
+                img.save(thumb_io, format="JPEG")
+                return thumb_io.getvalue()
+        except Exception as e:
+            logging.error(f"Failed to create thumbnail: {e}")
+            return None
+
+    def _size_to_hex(self, size, hex_length):
+        """
+        Converts a size value to a hexadecimal string of specified length.
+
+        Parameters:
+            size (int): The size value to convert.
+            hex_length (int): The desired length of the hexadecimal string.
+
+        Returns:
+            str: The hexadecimal representation of the size value, padded to `hex_length`.
+        """
+        return format(size, f"0{hex_length}X")
 
     def _read_svs_metadata(self, svs_file_path):
         slide = openslide.OpenSlide(svs_file_path)
@@ -65,29 +134,6 @@ class pdigy:
         # Read the image at the highest resolution
         highest_res_image = slide.read_region((0, 0), level, level_dimension)
         return highest_res_image
-
-    def _create_thumbnail(self):
-        if "svs" in self.image_path:
-            img = self._load_svs_image_data()
-            # Default to 72 DPI if not found - this seems a bit inefficient, we will need to find a better solution
-            dpi = img.info.get("dpi", (72, 72))
-            if img.mode == "RGBA":
-                img = img.convert("RGB")
-            image_format = img.format
-            print(dpi, image_format)
-            img.thumbnail((np.shape(img)[0] // 10, np.shape(img)[1] // 10))
-            with io.BytesIO() as thumb_io:
-                img.save(thumb_io, format="JPEG")
-                return thumb_io.getvalue()
-        else:
-            with Image.open(self.image_path) as img:
-                img.thumbnail((np.shape(img)[0] // 10, np.shape(img)[1] // 10))
-                with io.BytesIO() as thumb_io:
-                    img.save(thumb_io, format="JPEG")
-                    return thumb_io.getvalue()
-
-    def _size_to_hex(self, size, hex_length):
-        return format(size, f"0{hex_length}X")
 
     def _construct_file_content(self):
         file_content = b""
@@ -181,18 +227,32 @@ class pdigy:
         with open(file_path + ".pdigy", "wb") as file:
             file.write(file_content)
 
-    def encode_value(self, value, size):
+    def _encode_value(self, value, size):
+        """
+        Encodes a value with padding to fit the specified size.
+
+        Parameters:
+            value (str): The value to encode.
+            size (int): The size to pad the value to.
+
+        Returns:
+            bytes: The encoded value as bytes.
+        """
         if len(value) > size:
-            raise ValueError(
-                f"Value '{value}' exceeds the specified size of {size} bytes."
-            )
+            logging.error(f"Value '{value}' exceeds the specified size of {size} bytes.")
+            return None
+        return value.ljust(size, "\0").encode()
 
-        # Padding the value with zeros if it's shorter than the specified size
-        padded_value = value.rjust(size, "\0")
-        return padded_value.encode()
-
-    # Function to parse the map dataframe and extract necessary information
     def parse_map_dataframe(self, df):
+        """
+        Parses the DataFrame containing mapping information.
+
+        Parameters:
+            df (pandas.DataFrame): The DataFrame containing the map information.
+
+        Returns:
+            dict: A dictionary representation of the map information.
+        """
         mapping = {}
         for _, row in df.iterrows():
             # Ensure that the 'Code' is a string and strip any quotation marks
@@ -227,8 +287,68 @@ class pdigy:
                 }
         return mapping
 
+    def _update_binary_map(self, binary_map, code):
+        """
+        Updates the binary map to indicate the presence of a code.
+
+        Parameters:
+            binary_map (bytearray): The binary map to be updated.
+            code (str): The code to update in the binary map.
+        """
+        bit_position = int(code, hex_to_dec())
+        byte_index = bit_position // byte_to_bit()
+        bit_index = bit_position % byte_to_bit()
+        binary_map[byte_index] |= 1 << bit_index
+
+    def _encode_value_based_on_length(self, value, length_info, size_values):
+        """
+        Encodes a value based on its specified length information.
+
+        Parameters:
+            value (str): The value to be encoded.
+            length_info (tuple or int): Length information for the value, either as an integer or a tuple for variable lengths.
+            size_values (dict): Dictionary storing values of codes that determine the sizes of other codes.
+
+        Returns:
+            bytes: The encoded value as bytes, or None if the value cannot be encoded.
+        """
+        try:
+            if isinstance(length_info, tuple):
+                variable_code, fixed_length = length_info
+                size = size_values.get(variable_code, 0) * fixed_length
+            else:
+                size = length_info
+            return self._encode_value(value, size)
+        except Exception as e:
+            logging.error(f"Error encoding value '{value}': {e}")
+            return None
+
+    def _concatenate_encoded_data(self, binary_map, encoded_data_temp):
+        """
+        Concatenates the binary map with encoded data into a single byte array.
+
+        Parameters:
+            binary_map (bytearray): The binary map indicating which codes are present.
+            encoded_data_temp (dict): The temporary dictionary holding encoded values.
+
+        Returns:
+            bytes: The concatenated binary map and encoded data as a single byte array.
+        """
+        encoded_full_data = binary_map
+        for code, data in encoded_data_temp.items():
+            encoded_full_data.extend(data)
+        return bytes(encoded_full_data)
+
     def encode_meta(self, input_df):
-        # Initialize a binary map of 4096 bits with all zeros
+        """
+        Encodes metadata into a binary format based on the mapping information.
+
+        Parameters:
+            input_df (pandas.DataFrame): The DataFrame containing metadata to be encoded.
+
+        Returns:
+            bytes: Encoded metadata as a byte array.
+        """
         binary_map = bytearray(512)
         encoded_data_temp = {}  # Dictionary to hold encoded data temporarily
         # Temporary dictionary to store values of codes which determine sizes of other codes
@@ -268,22 +388,9 @@ class pdigy:
                             continue  # Skip processing this code until the variable code is processed
                     else:
                         size = length_info
-                    encoded_value = self.encode_value(value, size)
+                    encoded_value = self._encode_value(value, size)
                 encoded_data_temp[code] = encoded_value
-                # Update the binary map: setting the bit corresponding to the code to 1
-                bit_position = int(code, hex_to_dec())
-                byte_index = bit_position // byte_to_bit()
-                bit_index = bit_position % byte_to_bit()
-                binary_map[byte_index] |= 1 << bit_index
-                #print(binary_map)
-                #print(np.shape(binary_map))
+                self._update_binary_map(binary_map, code)
             else:
                 raise ValueError(f"Code '{code}' not found in the map.")
-        # Concatenate the binary map and the encoded data
-        encoded_full_data = binary_map
-        for code in encoded_data_temp:
-            #print("samples: ", encoded_data_temp)
-            #print(np.shape(encoded_data_temp))
-            encoded_full_data.extend(encoded_data_temp[code])
-            #print(encoded_full_data)
-        return encoded_full_data
+        return self._concatenate_encoded_data(binary_map, encoded_data_temp)
