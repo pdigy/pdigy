@@ -27,7 +27,7 @@ class pdigy:
             self.filter_map = None
             self._extract_patches()
         self.compression = True
-        map_path = "PDigyMap.xlsx"
+        map_path = "pdigy/PDigyMap.xlsx"
         map_df = pd.read_excel(map_path)
         self.map_info = self.parse_map_dataframe(map_df)
         if meta_path:
