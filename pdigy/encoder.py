@@ -2,7 +2,7 @@ from PIL import Image
 import io
 import numpy as np
 import pickle
-from constants import *
+from .constants import *
 import lzma as zipper
 import pandas as pd
 import openslide

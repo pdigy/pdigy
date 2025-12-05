@@ -3,8 +3,8 @@ import io
 import os
 import numpy as np
 import pickle
-from constants import *
-from encoder import pdigy
+from .constants import *
+from .encoder import pdigy
 import lzma as zipper
 import pandas as pd
 import struct
