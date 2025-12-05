@@ -12,7 +12,7 @@ import struct
 
 class pdigyDecoder:
     def __init__(self, file_path):
-        map_path = "PDigyMap.xlsx"
+        map_path = "pdigy/PDigyMap.xlsx"
         map_df = pd.read_excel(map_path)
         self.pdigy = pdigy()
         self.map_info = self.pdigy.parse_map_dataframe(map_df)
