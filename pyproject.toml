@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdigy"
+version = "0.1.0"
+description = "A pathology digital image compression and storage format"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "pdigy"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "Pillow>=8.0.0",
+    "numpy>=1.19.0",
+    "pandas>=1.1.0",
+    "openslide-python>=1.1.2",
+    "openpyxl>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter",
+    "matplotlib",
+]
+
+[project.urls]
+Homepage = "https://github.com/pdigy/pdigy"
+Repository = "https://github.com/pdigy/pdigy"
+
+[tool.setuptools]
+packages = ["pdigy"]
+
+[tool.setuptools.package-data]
+pdigy = ["*.xlsx"]
