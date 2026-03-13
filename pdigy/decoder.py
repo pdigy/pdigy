@@ -12,7 +12,7 @@ import struct
 
 class pdigyDecoder:
     def __init__(self, file_path):
-        map_path = "pdigy/PDigyMap.xlsx"
+        map_path = os.path.join(os.path.dirname(__file__), "PDigyMap.xlsx")
         map_df = pd.read_excel(map_path)
         self.pdigy = pdigy()
         self.map_info = self.pdigy.parse_map_dataframe(map_df)
@@ -71,8 +71,8 @@ class pdigyDecoder:
                 compressed_patches_data)
             self.patches = pickle.loads(serialized_patches_data)
             self.dimx = n_patches_x
-            self.dimy = n_patches_x
-            thumbnail_image = Image.open(io.BytesIO(thumbnail_data))
+            self.dimy = n_patches_y
+            thumbnail_image = Image.open(io.BytesIO(thumbnail_data)).convert("RGB")
             self.full_image = self.reconstruct_image()
             # Read the binary map of 4096 bits (512 bytes)
             binary_map = file.read(512)

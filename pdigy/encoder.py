@@ -6,6 +6,7 @@ from .constants import *
 import lzma as zipper
 import pandas as pd
 import openslide
+import os
 
 
 class pdigy:
@@ -16,6 +17,14 @@ class pdigy:
         self.map_word = header()
         self.image_path = image_path
         if self.image_path:
+            # Check for unsupported formats before processing
+            if "i2syntax" in self.image_path.lower():
+                raise NotImplementedError(
+                    f"Cannot convert i2syntax file directly: {self.image_path}\n"
+                    "Philips i2syntax (UFS) format requires conversion first.\n"
+                    "Please convert to SVS/TIFF using Philips Image Management System "
+                )
+            
             self.full_image_data = self._load_image_data()
             self.thumbnail_data = self._create_thumbnail()
             self.full_image_size_hex = self._size_to_hex(
@@ -27,7 +36,7 @@ class pdigy:
             self.filter_map = None
             self._extract_patches()
         self.compression = True
-        map_path = "pdigy/PDigyMap.xlsx"
+        map_path = os.path.join(os.path.dirname(__file__), "PDigyMap.xlsx")
         map_df = pd.read_excel(map_path)
         self.map_info = self.parse_map_dataframe(map_df)
         if meta_path:
@@ -67,25 +76,31 @@ class pdigy:
         return highest_res_image
 
     def _create_thumbnail(self):
+        thumbnail_max_size = (1024, 1024)
         if "svs" in self.image_path:
-            img = self._load_svs_image_data()
-            # Default to 72 DPI if not found - this seems a bit inefficient, we will need to find a better solution
-            dpi = img.info.get("dpi", (72, 72))
-            if img.mode == "RGBA":
+            slide = openslide.OpenSlide(self.image_path)
+
+            if "thumbnail" in slide.associated_images:
+                img = slide.associated_images["thumbnail"]
+            else:
+                img = slide.get_thumbnail(thumbnail_max_size)
+
+            if img.mode != "RGB":
                 img = img.convert("RGB")
-            image_format = img.format
-            print(dpi, image_format)
-            img.thumbnail((np.shape(img)[0] // 10, np.shape(img)[1] // 10))
+
+            img.thumbnail(thumbnail_max_size)
             with io.BytesIO() as thumb_io:
                 img.save(thumb_io, format="JPEG")
                 return thumb_io.getvalue()
         else:
             with Image.open(self.image_path) as img:
-                img.thumbnail((np.shape(img)[0] // 10, np.shape(img)[1] // 10))
+                img.thumbnail(thumbnail_max_size)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
                 with io.BytesIO() as thumb_io:
                     img.save(thumb_io, format="JPEG")
                     return thumb_io.getvalue()
-
+   
     def _size_to_hex(self, size, hex_length):
         return format(size, f"0{hex_length}X")
 
@@ -196,7 +211,7 @@ class pdigy:
         mapping = {}
         for _, row in df.iterrows():
             # Ensure that the 'Code' is a string and strip any quotation marks
-            code = str(row["Code"]).strip('"')
+            code = str(row["Code(in Hex)"]).strip('"')
 
             # Extract other information, handling potential format issues
             name = str(row["Name"]) if pd.notna(row["Name"]) else None
