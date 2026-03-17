@@ -6,5 +6,5 @@ from .encoder import pdigy
 from .decoder import pdigyDecoder
 from .constants import *
 
-__version__ = "0.1.0"
+__version__ = "1.0a"
 __all__ = ["pdigy", "pdigyDecoder"]

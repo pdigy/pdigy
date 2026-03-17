@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pdigy",
-    version="0.1.0",
+    version="1.0a",
     author="pdigy",
     description="A pathology digital image compression and storage format",
     long_description=long_description,
