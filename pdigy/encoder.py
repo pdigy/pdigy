@@ -13,9 +13,29 @@ class pdigy:
     def get_word_map(self):
         return self.map_word
 
-    def __init__(self, image_path=None, meta_path=None):
+    def __init__(
+        self,
+        image_path=None,
+        meta_path=None,
+        remove_whitespace=False,
+        patch_size=1024,
+        patch_jpeg_quality=95,
+        whitespace_preview_size=16,
+        whitespace_pixel_threshold=0.96,
+        whitespace_ratio_threshold=0.95,
+        whitespace_mean_intensity_threshold=0.95,
+        whitespace_std_intensity_threshold=0.008,
+    ):
         self.map_word = header()
         self.image_path = image_path
+        self.remove_whitespace = remove_whitespace
+        self.patch_size = patch_size
+        self.patch_jpeg_quality = patch_jpeg_quality
+        self.whitespace_preview_size = whitespace_preview_size
+        self.whitespace_pixel_threshold = whitespace_pixel_threshold
+        self.whitespace_ratio_threshold = whitespace_ratio_threshold
+        self.whitespace_mean_intensity_threshold = whitespace_mean_intensity_threshold
+        self.whitespace_std_intensity_threshold = whitespace_std_intensity_threshold
         if self.image_path:
             # Check for unsupported formats before processing
             if "i2syntax" in self.image_path.lower():
@@ -125,7 +145,14 @@ class pdigy:
         file_content += bytearray.fromhex(n_patches_x_hex)
         file_content += bytearray.fromhex(n_patches_y_hex)
         # Serialize and compress patches
-        serialized_patches = pickle.dumps(self.patches)
+        patch_payload = {
+            "patches": self.patches,
+            "filter_map": self.filter_map.astype(np.uint8),
+            "patch_modes": self.patch_modes.astype(np.uint8),
+            "patch_size": self.patch_size,
+            "whitespace_preview_size": self.whitespace_preview_size,
+        }
+        serialized_patches = pickle.dumps(patch_payload)
         if self.compression == True:
             compressed_patches = zipper.compress(serialized_patches)
         else:
@@ -144,7 +171,42 @@ class pdigy:
 
         return file_content
 
-    def _extract_patches(self, patch_size=1024, threshold=0.0, maximum_size=1000000):
+    def _is_whitespace_patch(self, patch, max_pixel_value):
+        if not self.remove_whitespace:
+            return False
+
+        rgb_patch = patch[..., :3]
+        white_threshold = max_pixel_value * self.whitespace_pixel_threshold
+        white_pixels = np.all(rgb_patch >= white_threshold, axis=-1)
+        if float(np.mean(white_pixels)) >= self.whitespace_ratio_threshold:
+            return True
+
+        grayscale_patch = rgb_patch.mean(axis=-1)
+        mean_intensity = float(np.mean(grayscale_patch))
+        std_intensity = float(np.std(grayscale_patch))
+        return (
+            mean_intensity >= max_pixel_value * self.whitespace_mean_intensity_threshold
+            and std_intensity <= max_pixel_value * self.whitespace_std_intensity_threshold
+        )
+
+    def _encode_patch(self, patch, is_whitespace_patch):
+        patch_image = Image.fromarray(patch)
+        if patch_image.mode == "RGBA":
+            patch_image = patch_image.convert("RGB")
+
+        if is_whitespace_patch:
+            resampling_module = getattr(Image, "Resampling", Image)
+            bilinear_resample = getattr(resampling_module, "BILINEAR", 2)
+            patch_image = patch_image.resize(
+                (self.whitespace_preview_size, self.whitespace_preview_size),
+                resample=bilinear_resample,
+            )
+
+        with io.BytesIO() as patch_io:
+            patch_image.save(patch_io, format="JPEG", quality=self.patch_jpeg_quality, subsampling=0)
+            return patch_io.getvalue()
+
+    def _extract_patches(self, threshold=0.0, maximum_size=1000000):
         if "svs" in self.image_path:
             img = np.array(self._load_svs_image_data())
         else:
@@ -158,28 +220,27 @@ class pdigy:
         print("Maximum pixel value is estimated to be: ", max_pixel_value)
 
         h, w, c = img.shape
-        dimy = int(np.ceil(w / patch_size))
-        dimx = int(np.ceil(h / patch_size))
-        self.filter_map = np.zeros([dimx, dimy])
+        dimy = int(np.ceil(w / self.patch_size))
+        dimx = int(np.ceil(h / self.patch_size))
+        self.filter_map = np.zeros([dimx, dimy], dtype=np.uint8)
+        self.patch_modes = np.zeros([dimx, dimy], dtype=np.uint8)
         print("img.shape", img.shape)
 
-        for i in range(0, h, patch_size):
-            for j in range(0, w, patch_size):
-                patch = img[i: i + patch_size, j: j + patch_size, :]
-                # Remove fat cells and white spaces
-                if np.mean(patch) < max_pixel_value * (1 - threshold):
-                    # Serialize each patch as JPEG
-                    with io.BytesIO() as patch_io:
-                        patch_image = Image.fromarray(patch)
-                        if patch_image.mode == "RGBA":
-                            patch_image = patch_image.convert("RGB")
-                        patch_image.save(patch_io, format="JPEG", quality=65)
-                        patch_data = patch_io.getvalue()
-                        self.patches.append(patch_data)
+        for i in range(0, h, self.patch_size):
+            for j in range(0, w, self.patch_size):
+                patch = img[i: i + self.patch_size, j: j + self.patch_size, :]
+                patch_row = i // self.patch_size
+                patch_col = j // self.patch_size
+                is_whitespace_patch = self._is_whitespace_patch(patch, max_pixel_value)
+                patch_data = self._encode_patch(patch, is_whitespace_patch)
+                self.patches.append(patch_data)
+                self.filter_map[patch_row, patch_col] = 1
+                self.patch_modes[patch_row, patch_col] = 2 if is_whitespace_patch else 1
 
-                    count_pass += 1
-                else:
+                if is_whitespace_patch:
                     count_fail += 1
+                else:
+                    count_pass += 1
 
         print(
             "pass: ",
@@ -206,25 +267,48 @@ class pdigy:
         padded_value = value.rjust(size, "\0")
         return padded_value.encode()
 
+    def _normalize_code(self, code):
+        normalized_code = str(code).strip().strip('"')
+        if self.remove_whitespace:
+            normalized_code = "".join(normalized_code.split())
+        return normalized_code
+
+    def _get_dataframe_column(self, df, *candidates):
+        normalized_columns = {
+            str(column).strip().casefold(): column for column in df.columns
+        }
+        for candidate in candidates:
+            column = normalized_columns.get(candidate.strip().casefold())
+            if column is not None:
+                return column
+        raise KeyError(
+            f"Missing expected column. Tried {candidates}, found {list(df.columns)}"
+        )
+
     # Function to parse the map dataframe and extract necessary information
     def parse_map_dataframe(self, df):
+        code_column = self._get_dataframe_column(df, "Code(in Hex)", "Code (Hex)")
+        name_column = self._get_dataframe_column(df, "Name")
+        length_column = self._get_dataframe_column(df, "Length(B)", "Length (B)")
+        description_column = self._get_dataframe_column(df, "Description")
+        note_column = self._get_dataframe_column(df, "Note")
         mapping = {}
         for _, row in df.iterrows():
             # Ensure that the 'Code' is a string and strip any quotation marks
-            code = str(row["Code(in Hex)"]).strip('"')
+            code = self._normalize_code(row[code_column])
 
             # Extract other information, handling potential format issues
-            name = str(row["Name"]) if pd.notna(row["Name"]) else None
-            length = row["Length(B)"]
+            name = str(row[name_column]) if pd.notna(row[name_column]) else None
+            length = row[length_column]
             description = (
-                str(row["Description"]) if pd.notna(
-                    row["Description"]) else None
+                str(row[description_column]) if pd.notna(
+                    row[description_column]) else None
             )
-            note = str(row["Note"]) if pd.notna(row["Note"]) else None
+            note = str(row[note_column]) if pd.notna(row[note_column]) else None
 
             if "*" in str(length):
                 variable_code, fixed_length = length.split("*")
-                variable_code = variable_code.strip('"')
+                variable_code = self._normalize_code(variable_code)
                 fixed_length = int(fixed_length)
                 mapping[code] = {
                     "name": name,
@@ -250,7 +334,7 @@ class pdigy:
         size_values = {}
 
         for _, row in input_df.iterrows():
-            code = row["Code"].strip('"')
+            code = self._normalize_code(row["Code"])
             value = row["Value"].strip('"')
             #print("values", code, value)
 
